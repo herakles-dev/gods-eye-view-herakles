@@ -55,6 +55,11 @@ import {
   DEFAULT_CALGARY_MAX_SOURCES,
   CALGARY_DOWNTOWN,
   CALGARY_MAX_CATALOG_BYTES,
+  DEFAULT_ILLINOIS_ROWS_URL,
+  ILLINOIS_IMAGE_ORIGIN,
+  DEFAULT_ILLINOIS_MAX_SOURCES,
+  ILLINOIS_CHICAGO_LOOP,
+  ILLINOIS_MAX_CATALOG_BYTES,
   CCTV_SOURCE_FETCH_TIMEOUT_MS,
   DELDOT_CCTV_URL,
   DEFAULT_DELDOT_MAX_SOURCES,
@@ -76,6 +81,7 @@ import {
   isLikelyTexasCoordinate,
   isLikelyNswCoordinate,
   isLikelyCalgaryCoordinate,
+  isLikelyChicagolandCoordinate,
   cameraDisplayCode,
   rowArrayToObject,
   prioritizeSources,
@@ -1592,6 +1598,191 @@ export async function loadCalgarySourcesFromOpenData() {
   } catch (error) {
     console.warn(
       '[CCTV] Calgary camera download error:',
+      error?.message || error,
+    );
+    return [];
+  }
+}
+
+/**
+ * Pin an Illinois Gateway frame URL to the TravelMidwest snapshot host.
+ *
+ * @param {string|null|undefined} raw - `SnapShot` from the feature attributes.
+ * @returns {?string} Pinned HTTPS URL, or null when unusable.
+ */
+export function normalizeIllinoisImageUrl(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return null;
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  parsed.protocol = 'https:';
+  const upgraded = parsed.toString();
+  return upgraded.startsWith(ILLINOIS_IMAGE_ORIGIN) ? upgraded : null;
+}
+
+/**
+ * Stable camera id: the Gateway camera id from `ImgPath` (`?id=IL-IDOTD1-IK14B`)
+ * plus its facing, since one id can publish several directions as separate rows.
+ * Falls back to the snapshot filename so a changed `ImgPath` shape degrades to
+ * a still-stable id rather than dropping the camera.
+ *
+ * @param {object} attributes - ArcGIS feature attributes.
+ * @param {string} imageUrl - A normalized frame URL.
+ * @returns {?string}
+ */
+export function illinoisCameraId(attributes, imageUrl) {
+  const dir = String(attributes?.CameraDirection ?? 'NONE')
+    .trim()
+    .toLowerCase();
+  let gatewayId = null;
+  try {
+    gatewayId = new URL(String(attributes?.ImgPath ?? '')).searchParams.get(
+      'id',
+    );
+  } catch {
+    /* fall through to the filename */
+  }
+  const base =
+    gatewayId ||
+    String(imageUrl ?? '')
+      .replace(/^.*\/snapshots\//, '')
+      .replace(/\.[a-z0-9]+$/i, '');
+  const slug = String(base)
+    .replace(/^IL-/i, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+  return slug ? `il-${slug}-${dir || 'none'}` : null;
+}
+
+/**
+ * One Illinois Gateway feature -> one catalog source, or null.
+ *
+ * `CameraDirection` is a dedicated facing field (N/NE/E/…, or NONE when the
+ * camera does not report one), so bare cardinals are accepted and NONE falls
+ * back to the shared id-hash heading at low confidence. Cameras the feed flags
+ * `TooOld` (no fresh frame) are dropped.
+ *
+ * @param {object} feature - ArcGIS feature `{attributes, geometry}`.
+ * @returns {?object}
+ */
+export function illinoisCameraToSource(feature) {
+  const attributes = feature?.attributes;
+  if (!attributes || typeof attributes !== 'object') return null;
+  if (String(attributes.TooOld).toLowerCase() === 'true') return null;
+  const lon = toFiniteNumber(feature?.geometry?.x);
+  const lat = toFiniteNumber(feature?.geometry?.y);
+  if (!isLikelyChicagolandCoordinate(lat, lon)) return null;
+
+  const imageUrl = normalizeIllinoisImageUrl(attributes.SnapShot);
+  if (!imageUrl) return null;
+  const cameraId = illinoisCameraId(attributes, imageUrl);
+  if (!cameraId) return null;
+  const name =
+    String(attributes.CameraLocation ?? '').trim() ||
+    `Illinois Camera ${cameraId.replace(/^il-/, '')}`;
+
+  // The feed's single-letter facings (N/E/S/W) are not words the shared parser
+  // reads; NE/NW/SE/SW and NONE already are (NONE -> NaN -> low-confidence).
+  const facing = String(attributes.CameraDirection ?? '')
+    .trim()
+    .toUpperCase();
+  const heading =
+    { N: 0, E: 90, S: 180, W: 270 }[facing] ?? directionToHeading(facing, true);
+  const hasHeading = Number.isFinite(heading);
+
+  return {
+    id: cameraId,
+    name,
+    city: 'Chicago',
+    cityId: 'chicago',
+    provider: 'Illinois DOT / Gateway',
+    lat,
+    lon,
+    headingDeg: hasHeading ? heading : fallbackHeadingFromId(cameraId),
+    headingConfidence: hasHeading ? 'high' : 'low',
+    pitchDeg: hasHeading ? -24 : -18,
+    fovDeg: hasHeading ? 56 : 44,
+    rangeM: hasHeading ? 210 : 145,
+    mountHeightM: hasHeading ? 10 : 8,
+    // Chicago is ~180 m above sea level; the client's one-shot ground snap
+    // corrects this prior wherever 3D tiles are loaded.
+    groundElevationM: 180,
+    feedType: 'image',
+    url: imageUrl,
+    snapshotUrl: imageUrl,
+    sourceKind: 'illinois-gateway',
+    license:
+      'Illinois DOT Gateway traffic cameras, CC BY-SA 2.0 (travelmidwest.com)',
+    code: cameraDisplayCode(name.toUpperCase()),
+  };
+}
+
+/**
+ * Fetch Chicago-area traffic cameras from the IDOT Gateway ArcGIS layer,
+ * keyless. Frames are stills on cctv.travelmidwest.com.
+ *
+ * @returns {Promise<Array<object>>} Normalized camera source objects.
+ */
+export async function loadIllinoisSourcesFromOpenData() {
+  try {
+    const endpoint =
+      process.env.CCTV_ILLINOIS_ROWS_URL || DEFAULT_ILLINOIS_ROWS_URL;
+    const resp = await fetch(endpoint, {
+      headers: { Accept: 'application/json' },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+    });
+    const discard = async () => {
+      try {
+        await resp.body?.cancel();
+      } catch {
+        /* no-op */
+      }
+      return [];
+    };
+    if (resp.status >= 300 && resp.status < 400) {
+      console.warn(
+        '[CCTV] Illinois catalog redirected; redirects are not followed',
+      );
+      return discard();
+    }
+    if (!resp.ok) {
+      console.warn('[CCTV] Illinois camera download failed:', resp.status);
+      return discard();
+    }
+    const body = await readResponseJsonCapped(resp, ILLINOIS_MAX_CATALOG_BYTES);
+    const features = body?.features;
+    if (!Array.isArray(features)) return [];
+    const cameras = [];
+    const seen = new Set();
+    for (const feature of features) {
+      const camera = illinoisCameraToSource(feature);
+      if (!camera || seen.has(camera.id)) continue;
+      seen.add(camera.id);
+      cameras.push(camera);
+    }
+    const maxRaw = Number(
+      process.env.CCTV_ILLINOIS_MAX_SOURCES || DEFAULT_ILLINOIS_MAX_SOURCES,
+    );
+    const maxCount = Number.isFinite(maxRaw)
+      ? Math.max(8, Math.min(1000, Math.floor(maxRaw)))
+      : DEFAULT_ILLINOIS_MAX_SOURCES;
+    const prioritized = prioritizeSources(cameras, maxCount, [
+      ILLINOIS_CHICAGO_LOOP,
+    ]);
+    console.log(
+      `[CCTV] Loaded Illinois camera sources: ${cameras.length} (using nearest ${prioritized.length})`,
+    );
+    return prioritized;
+  } catch (error) {
+    console.warn(
+      '[CCTV] Illinois camera download error:',
       error?.message || error,
     );
     return [];

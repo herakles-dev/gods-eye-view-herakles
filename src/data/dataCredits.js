@@ -241,6 +241,13 @@ export const DATA_CREDITS = [
       '<a href="https://data.calgary.ca/stories/s/Open-Calgary-Terms-of-Use/u45n-7awa" target="_blank" rel="noopener">Open Government Licence – City of Calgary</a>',
   },
   {
+    key: 'illinois-cctv',
+    html:
+      'Traffic cameras (Chicago / Illinois): Illinois DOT / ' +
+      '<a href="https://travelmidwest.com/" target="_blank" rel="noopener">Gateway (TravelMidwest)</a>, ' +
+      '<a href="https://creativecommons.org/licenses/by-sa/2.0/" target="_blank" rel="noopener">CC BY-SA 2.0</a>',
+  },
+  {
     key: 'gbfs',
     html: 'Bikeshare availability: GBFS operator feeds (e.g. Austin BCycle)',
   },

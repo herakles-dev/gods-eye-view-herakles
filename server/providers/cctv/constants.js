@@ -236,6 +236,26 @@ export const CALGARY_DOWNTOWN = { lat: 51.0461, lon: -114.0626 };
  * body cannot be buffered without limit. */
 export const CALGARY_MAX_CATALOG_BYTES = 4 * 1024 * 1024;
 
+/** Illinois Gateway (IDOT / TravelMidwest) traffic cameras: one keyless ArcGIS
+ * FeatureServer layer for the whole state (~3,700 cameras). The default query
+ * is clipped to the Chicago metro envelope so the pack loads in one request;
+ * CCTV_ILLINOIS_ROWS_URL overrides it (drop the geometry filter for statewide).
+ * Frames are stills on a single TravelMidwest host. */
+export const DEFAULT_ILLINOIS_ROWS_URL =
+  'https://services2.arcgis.com/aIrBD8yn1TDTEXoz/arcgis/rest/services/TrafficCamerasTM_Public/FeatureServer/0/query' +
+  '?where=1%3D1&geometry=-88.7,41.3,-87.3,42.6&geometryType=esriGeometryEnvelope' +
+  '&inSR=4326&spatialRel=esriSpatialRelIntersects' +
+  '&outFields=OBJECTID,ImgPath,CameraLocation,CameraDirection,SnapShot,TooOld' +
+  '&returnGeometry=true&outSR=4326&f=json&resultRecordCount=2000';
+/** The only origin Illinois Gateway frames may come from. */
+export const ILLINOIS_IMAGE_ORIGIN = 'https://cctv.travelmidwest.com/';
+export const DEFAULT_ILLINOIS_MAX_SOURCES = 400;
+/** The Loop (State / Madison): the prioritization anchor. */
+export const ILLINOIS_CHICAGO_LOOP = { lat: 41.8819, lon: -87.6278 };
+/** Hard ceiling on the Illinois catalog body (the Chicago-clipped answer is
+ * ~100 KB; a statewide override is well under this). */
+export const ILLINOIS_MAX_CATALOG_BYTES = 8 * 1024 * 1024;
+
 /** DelDOT CCTV: one keyless statewide JSON catalog; live video via RTMP-over-HTTP (rtmpt:80). */
 export const DELDOT_CCTV_URL = 'https://tmc.deldot.gov/json/videocamera.json';
 export const DEFAULT_DELDOT_MAX_SOURCES = 300;

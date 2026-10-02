@@ -367,6 +367,17 @@ export function isLikelyCalgaryCoordinate(lat, lon) {
   );
 }
 
+/** Chicago metro (Illinois Gateway cameras), with slack for the collar counties. */
+export function isLikelyChicagolandCoordinate(lat, lon) {
+  return (
+    isPlausibleLatLon(lat, lon) &&
+    lat >= 41.3 &&
+    lat <= 42.6 &&
+    lon >= -88.7 &&
+    lon <= -87.3
+  );
+}
+
 export function isLikelyFinlandCoordinate(lat, lon) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
   return lat >= 59.5 && lat <= 70.5 && lon >= 19 && lon <= 32;
